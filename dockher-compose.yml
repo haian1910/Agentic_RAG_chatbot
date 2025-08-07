@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  fastapi:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+    volumes:
+      - ./documents:/app/documents
+      - ./vectorstore:/app/vectorstore
+    restart: unless-stopped
+
+  streamlit:
+    build: .
+    command: streamlit run streamlit_app.py --server.port=8501 --server.address=0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      - API_BASE=http://fastapi:8000
+    depends_on:
+      - fastapi
+    restart: unless-stopped
