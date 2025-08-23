@@ -193,8 +193,4 @@ docker-compose logs -f
 
 ## License
 
-<<<<<<< HEAD
 This project is licensed under the MIT License.
-=======
-This project is licensed under the MIT License.
->>>>>>> 3cd84c173e5a093788b4355ef9737a43f6a164ee
