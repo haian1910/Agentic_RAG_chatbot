@@ -7,15 +7,29 @@ from langchain.schema.runnable import RunnablePassthrough
 from langchain.agents.output_parsers import JSONAgentOutputParser
 from langchain.agents.format_scratchpad import format_log_to_str
 from langchain.tools.render import render_text_description_and_args
+from langchain.memory import ConversationBufferWindowMemory
+from langchain.schema import BaseMessage, HumanMessage, AIMessage
 from vector_store import VectorStore
 from web_search import WebSearch
 import config
+import json
+from typing import List, Dict, Any
 
 class RAGAgent:
-    def __init__(self):
+    def __init__(self, session_id: str = "default"):
         self.llm = ChatGoogleGenerativeAI(model=config.LLM_MODEL)
         self.vector_store = VectorStore()
         self.web_search = WebSearch()
+        self.session_id = session_id
+        
+        # Initialize memory with window to keep last 10 exchanges (20 messages)
+        self.memory = ConversationBufferWindowMemory(
+            k=20,  # Keep last 20 messages (10 exchanges)
+            memory_key="chat_history",
+            return_messages=True,
+            output_key="output"
+        )
+        
         self.agent_executor = None
         self._setup_tools()
         self._create_agent()
@@ -57,10 +71,18 @@ class RAGAgent:
         ]
     
     def _create_agent(self):
-        """Create the RAG agent"""
-        system_prompt = """Respond to the human as helpfully and accurately as possible. You have access to the following tools: {tools}
+        """Create the RAG agent with memory"""
+        system_prompt = """You are a helpful AI assistant that can search through uploaded documents and the web to answer questions. You have access to the following tools: {tools}
 
-Always try the "VectorStoreSearch" tool first. Only use "WebSearch" if the vector store does not contain the required information.
+IMPORTANT INSTRUCTIONS:
+1. Always consider the conversation history when answering questions
+2. If the user refers to something from earlier in the conversation, use that context
+3. Always try the "VectorStoreSearch" tool first for document-related questions
+4. Only use "WebSearch" if the vector store does not contain the required information
+5. Be conversational and remember what was discussed previously
+
+Previous conversation:
+{chat_history}
 
 Use a json blob to specify a tool by providing an action key (tool name) and an action_input key (tool input).
 Valid "action" values: "Final Answer" or {tool_names}
@@ -75,7 +97,7 @@ Provide only ONE action per $JSON_BLOB, as shown:
 
 Follow this format:
 Question: input question to answer
-Thought: consider previous and subsequent steps
+Thought: consider previous conversation and current question, then decide on next steps
 Action:
 ```
 $JSON_BLOB
@@ -110,6 +132,7 @@ Begin! Reminder to ALWAYS respond with a valid json blob of a single action."""
         chain = (
             RunnablePassthrough.assign(
                 agent_scratchpad=lambda x: format_log_to_str(x["intermediate_steps"]),
+                chat_history=lambda x: self._format_chat_history()
             )
             | prompt
             | self.llm
@@ -119,17 +142,55 @@ Begin! Reminder to ALWAYS respond with a valid json blob of a single action."""
         self.agent_executor = AgentExecutor(
             agent=chain,
             tools=self.tools,
+            memory=self.memory,
             handle_parsing_errors=True,
             verbose=False
         )
     
+    def _format_chat_history(self) -> str:
+        """Format chat history for the prompt"""
+        if not self.memory.chat_memory.messages:
+            return "No previous conversation."
+        
+        formatted_history = []
+        for message in self.memory.chat_memory.messages[-10:]:  # Last 5 exchanges
+            if isinstance(message, HumanMessage):
+                formatted_history.append(f"Human: {message.content}")
+            elif isinstance(message, AIMessage):
+                formatted_history.append(f"Assistant: {message.content}")
+        
+        return "\n".join(formatted_history) if formatted_history else "No previous conversation."
+    
     def query(self, question: str) -> str:
-        """Process a query through the RAG agent"""
+        """Process a query through the RAG agent with memory"""
         try:
             result = self.agent_executor.invoke({"input": question})
             return result['output']
         except Exception as e:
             return f"Agent error: {str(e)}"
+    
+    def clear_memory(self):
+        """Clear the conversation memory"""
+        self.memory.clear()
+    
+    def get_memory_summary(self) -> List[Dict[str, str]]:
+        """Get a summary of the conversation history"""
+        messages = []
+        for message in self.memory.chat_memory.messages:
+            if isinstance(message, HumanMessage):
+                messages.append({"role": "user", "content": message.content})
+            elif isinstance(message, AIMessage):
+                messages.append({"role": "assistant", "content": message.content})
+        return messages
+    
+    def load_memory_from_messages(self, messages: List[Dict[str, str]]):
+        """Load memory from a list of message dictionaries"""
+        self.memory.clear()
+        for message in messages:
+            if message["role"] == "user":
+                self.memory.chat_memory.add_user_message(message["content"])
+            elif message["role"] == "assistant":
+                self.memory.chat_memory.add_ai_message(message["content"])
     
     def load_documents(self, file_path: str) -> bool:
         """Load documents into vector store"""
