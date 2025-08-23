@@ -1,12 +1,10 @@
 # QA RAG System
 
 A simple Question-Answering system using Retrieval-Augmented Generation (RAG) with FastAPI backend and Streamlit frontend.
-<<<<<<< HEAD
+
 ## Update
 - 23/8/2025: Adding memory for chatbot.
-=======
 
->>>>>>> 3cd84c173e5a093788b4355ef9737a43f6a164ee
 ## Features
 
 - 📄 PDF document upload and indexing
